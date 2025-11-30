@@ -8,6 +8,9 @@ A Flask REST API that communicates with MetaTrader5 to retrieve currency quotes 
 - Support for multiple timeframes (M1, M5, M15, H1, D1, etc.)
 - Date range filtering for historical data
 - List available symbols from MetaTrader
+- **Ichimoku Cloud analysis with automated buy/sell signals**
+  - Calculates all Ichimoku components (Tenkan-sen, Kijun-sen, Senkou Span A/B, Chikou Span)
+  - Generates trading signals based on price position relative to cloud and line relationships
 
 ## Prerequisites
 
@@ -106,6 +109,81 @@ Get list of available symbols from MetaTrader.
 ```json
 {
   "symbols": ["EURUSD", "GBPUSD", "USDJPY", ...]
+}
+```
+
+### GET /ichimoku
+Get hourly candle data with Ichimoku Cloud indicators and trading signals.
+
+**Query Parameters:**
+- `symbol` (required): Currency pair symbol (e.g., 'EURUSD', 'GBPUSD')
+- `count` (optional): Number of hourly bars to retrieve. Default: 200 (minimum 52 for proper Ichimoku calculation)
+- `start_date` (optional): Start date in 'YYYY-MM-DD' format
+- `end_date` (optional): End date in 'YYYY-MM-DD' format
+
+**Ichimoku Components:**
+- **Tenkan-sen (Conversion Line)**: (9-period high + 9-period low) / 2
+- **Kijun-sen (Base Line)**: (26-period high + 26-period low) / 2
+- **Senkou Span A (Leading Span A)**: (Tenkan-sen + Kijun-sen) / 2, plotted 26 periods ahead
+- **Senkou Span B (Leading Span B)**: (52-period high + 52-period low) / 2, plotted 26 periods ahead
+- **Chikou Span (Lagging Span)**: Current closing price, plotted 26 periods back
+
+**Trading Signals:**
+- **BUY Signal**: Price above cloud, Base Line (Kijun) above Conversion Line (Tenkan), Lagging Span (Chikou) above price
+- **SELL Signal**: Price below cloud, Base Line (Kijun) below Conversion Line (Tenkan), Lagging Span (Chikou) below price
+- **NEUTRAL**: Conditions not fully met
+
+**Example Request:**
+```bash
+# Get Ichimoku data for EURUSD
+curl "http://localhost:5000/ichimoku?symbol=EURUSD&count=200"
+```
+
+**Response:**
+```json
+{
+  "symbol": "EURUSD",
+  "timeframe": "H1",
+  "total_candles": 200,
+  "latest_signal": {
+    "signal": "buy",
+    "reason": "Price above cloud, Kijun above Tenkan, Chikou above price",
+    "conditions_met": {
+      "price_above_cloud": true,
+      "price_below_cloud": false,
+      "kijun_above_tenkan": true,
+      "kijun_below_tenkan": false,
+      "chikou_above_price": true,
+      "chikou_below_price": false
+    }
+  },
+  "data": [
+    {
+      "time": "2024-01-15 10:00:00",
+      "open": 1.08950,
+      "high": 1.09020,
+      "low": 1.08910,
+      "close": 1.08980,
+      "ichimoku": {
+        "tenkan_sen": 1.08960,
+        "kijun_sen": 1.08970,
+        "senkou_span_a": 1.08965,
+        "senkou_span_b": 1.08955,
+        "chikou_span": 1.08990,
+        "cloud_status": "above"
+      },
+      "signal": {
+        "signal": "buy",
+        "reason": "Price above cloud, Kijun above Tenkan, Chikou above price",
+        "conditions_met": {
+          "price_above_cloud": true,
+          "kijun_above_tenkan": true,
+          "chikou_above_price": true
+        }
+      }
+    },
+    ...
+  ]
 }
 ```
 

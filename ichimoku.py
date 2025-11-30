@@ -53,17 +53,17 @@ class IchimokuCalculator:
         
         # Calculate Senkou Span A (Leading Span A)
         # (Tenkan-sen + Kijun-sen) / 2, plotted 26 periods ahead
-        result_df['senkou_span_a'] = (result_df['tenkan_sen'] + result_df['kijun_sen']) / 2
-        # Shift forward by 26 periods
-        result_df['senkou_span_a'] = result_df['senkou_span_a'].shift(-self.chikou_shift)
+        result_df['senkou_span_a_unshifted'] = (result_df['tenkan_sen'] + result_df['kijun_sen']) / 2
+        # Store shifted version for display (plotted 26 periods ahead)
+        result_df['senkou_span_a'] = result_df['senkou_span_a_unshifted'].shift(-self.chikou_shift)
         
         # Calculate Senkou Span B (Leading Span B)
         # (52-period high + 52-period low) / 2, plotted 26 periods ahead
         senkou_b_high = result_df['high'].rolling(window=self.senkou_b_period).max()
         senkou_b_low = result_df['low'].rolling(window=self.senkou_b_period).min()
-        result_df['senkou_span_b'] = (senkou_b_high + senkou_b_low) / 2
-        # Shift forward by 26 periods
-        result_df['senkou_span_b'] = result_df['senkou_span_b'].shift(-self.chikou_shift)
+        result_df['senkou_span_b_unshifted'] = (senkou_b_high + senkou_b_low) / 2
+        # Store shifted version for display (plotted 26 periods ahead)
+        result_df['senkou_span_b'] = result_df['senkou_span_b_unshifted'].shift(-self.chikou_shift)
         
         # Calculate Chikou Span (Lagging Span)
         # Current closing price, plotted 26 periods back
@@ -71,18 +71,26 @@ class IchimokuCalculator:
         
         return result_df
     
-    def get_cloud_status(self, row):
+    def get_cloud_status(self, row, use_unshifted=True):
         """
         Determine if price is above or below the cloud
         
         Args:
             row: DataFrame row with senkou_span_a and senkou_span_b
+            use_unshifted: If True, use unshifted values for signal generation (default: True)
         
         Returns:
             str: 'above', 'below', or 'inside' (if spans are NaN)
         """
-        span_a = row.get('senkou_span_a')
-        span_b = row.get('senkou_span_b')
+        # For signal generation, use unshifted values (cloud from 26 bars ago affects current bar)
+        # For display, use shifted values (cloud plotted ahead)
+        if use_unshifted:
+            span_a = row.get('senkou_span_a_unshifted')
+            span_b = row.get('senkou_span_b_unshifted')
+        else:
+            span_a = row.get('senkou_span_a')
+            span_b = row.get('senkou_span_b')
+        
         price = row.get('close')
         
         if pd.isna(span_a) or pd.isna(span_b) or pd.isna(price):
@@ -121,25 +129,32 @@ class IchimokuCalculator:
         Returns:
             dict: Signal information with 'signal' ('buy', 'sell', or 'neutral') and conditions
         """
-        # Check if we have all required values
+        # Check if we have all required values for signal generation
+        # Use unshifted cloud values for signal generation
         required_fields = ['close', 'tenkan_sen', 'kijun_sen', 'chikou_span', 
-                          'senkou_span_a', 'senkou_span_b']
+                          'senkou_span_a_unshifted', 'senkou_span_b_unshifted']
         
+        # Check for missing or NaN values
+        missing_fields = []
         for field in required_fields:
             if field not in row or pd.isna(row[field]):
-                return {
-                    'signal': 'neutral',
-                    'reason': f'Missing or NaN value for {field}',
-                    'conditions_met': {}
-                }
+                missing_fields.append(field)
+        
+        # If we have missing fields, return neutral signal
+        if missing_fields:
+            return {
+                'signal': 'neutral',
+                'reason': f'Insufficient data for signal generation (missing: {", ".join(missing_fields)})',
+                'conditions_met': {}
+            }
         
         price = row['close']
         tenkan = row['tenkan_sen']
         kijun = row['kijun_sen']
         chikou = row['chikou_span']
         
-        # Get cloud status
-        cloud_status = self.get_cloud_status(row)
+        # Get cloud status using unshifted values (for signal generation)
+        cloud_status = self.get_cloud_status(row, use_unshifted=True)
         
         # Check conditions
         conditions = {
@@ -242,13 +257,28 @@ class IchimokuCalculator:
                 'chikou_span': float(row['chikou_span']) if not pd.isna(row['chikou_span']) else None,
             }
             
-            # Get cloud status
-            cloud_status = self.get_cloud_status(row)
+            # For signal generation, we need to compare current price to cloud from 26 bars ago
+            # The cloud that affects the current bar was calculated 26 bars ago
+            signal_row = row.copy()
+            if idx >= self.chikou_shift:
+                # Use cloud values from 26 bars ago (the cloud that affects current bar)
+                cloud_idx = idx - self.chikou_shift
+                cloud_row = df_with_ichimoku.iloc[cloud_idx]
+                # Update signal_row with cloud values from 26 bars ago
+                signal_row['senkou_span_a_unshifted'] = cloud_row['senkou_span_a_unshifted']
+                signal_row['senkou_span_b_unshifted'] = cloud_row['senkou_span_b_unshifted']
+            else:
+                # Not enough history (need at least 26 bars for cloud calculation)
+                signal_row['senkou_span_a_unshifted'] = pd.NA
+                signal_row['senkou_span_b_unshifted'] = pd.NA
+            
+            # Get cloud status using cloud values from 26 bars ago
+            cloud_status = self.get_cloud_status(signal_row, use_unshifted=True)
             ichimoku_data['cloud_status'] = cloud_status
             
-            # Generate signal
+            # Generate signal using the modified row
             previous_row = df_with_ichimoku.iloc[idx - 1] if idx > 0 else None
-            signal_data = self.generate_signal(row, previous_row)
+            signal_data = self.generate_signal(signal_row, previous_row)
             
             result.append({
                 **candle_data,

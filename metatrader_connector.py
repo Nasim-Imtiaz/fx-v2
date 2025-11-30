@@ -27,7 +27,7 @@ class MetaTraderConnector:
         """
         try:
             # Initialize MT5
-            if not mt5.initialize(path=path, login=login, password=password, server=server):
+            if not mt5.initialize():
                 error_code = mt5.last_error()
                 logger.error(f"MetaTrader5 initialization failed: {error_code}")
                 return False
